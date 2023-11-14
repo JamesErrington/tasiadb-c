@@ -14,7 +14,7 @@ $(BUILD_DIR)/bin/$(EXEC): $(OBJS)
 	mkdir -p $(dir $@)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS)
 
-$(BUILD_DIR)/%.o: $(SRCS)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
