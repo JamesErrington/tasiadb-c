@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <string.h>
 #include "include/parser.h"
+#include "include/ast.h"
 
 static bool is_whitespace(char rune) {
     switch (rune) {
@@ -31,11 +32,8 @@ typedef enum TokenType {
     TABLE_TOKEN,
 
     _types_start,
-    NULL_TOKEN,
     INTEGER_TOKEN,
-    REAL_TOKEN,
     TEXT_TOKEN,
-    BLOB_TOKEN,
     _types_end,
     _keywords_end,
 
@@ -102,16 +100,10 @@ static Token consume_ident(Tokenizer *tokenizer) {
         type = CREATE_TOKEN;
     } else if (strcmp(ident, "TABLE") == 0) {
         type = TABLE_TOKEN;
-    } else if (strcmp(ident, "NULL") == 0) {
-        type = NULL_TOKEN;
     } else if (strcmp(ident, "INTEGER") == 0) {
         type = INTEGER_TOKEN;
-    } else if (strcmp(ident, "REAL") == 0) {
-        type = REAL_TOKEN;
     } else if (strcmp(ident, "TEXT") == 0) {
         type = TEXT_TOKEN;
-    } else if (strcmp(ident, "BLOB") == 0) {
-        type = BLOB_TOKEN;
     }
 
     return make_token(tokenizer, type);
@@ -127,6 +119,8 @@ static Token next_token(Tokenizer *tokenizer) {
 
     char rune = advance_tokenizer(tokenizer);
     switch (rune) {
+        case ',':
+            return make_token(tokenizer, COMMA_TOKEN);
         case '(':
             return make_token(tokenizer, OPEN_PAREN_TOKEN);
         case ')':
@@ -148,6 +142,8 @@ typedef struct Parser {
     Tokenizer tokenizer;
     Token previous;
     Token current;
+    bool had_error;
+    bool is_panicked;
 } Parser;
 
 static Parser new_parser(const char *input) {
@@ -157,8 +153,14 @@ static Parser new_parser(const char *input) {
 
     Parser parser;
     parser.tokenizer = tokenizer;
+    parser.had_error = false;
+    parser.is_panicked = false;
 
     return parser;
+}
+
+static Token peek_parser(Parser *parser) {
+    return parser->current;
 }
 
 static void advance_parser(Parser *parser) {
@@ -167,9 +169,99 @@ static void advance_parser(Parser *parser) {
     printf("%d '%.*s'\n", parser->current.type, parser->current.length, parser->current.value);
 }
 
+// Forward Declarations
+static void parse_create_table_statement(Parser *parser);
+static void parse_name(Parser *parser);
+static void parse_column_list(Parser *parser);
+static void parse_column_list_prime(Parser *parser);
+static void parse_column(Parser *parser);
+static void parse_type(Parser *parser);
+
+
 void run_tasiadb_parser(const char *input) {
     printf("Parsing '%s'\n", input);
 
     Parser parser = new_parser(input);
     advance_parser(&parser);
+
+    parse_create_table_statement(&parser);
+    if (parser.had_error == false) {
+        printf("Parsed successfully!\n");
+    }
+}
+
+static void error(Parser *parser, const char *message) {
+    if (parser->is_panicked) return;
+    parser->is_panicked = true;
+    printf("Parse Error: %s\n", message);
+    free(message);
+    parser->had_error = true;
+}
+
+static void expect_token(Parser *parser, TokenType expected) {
+    Token token = peek_parser(parser);
+    if (token.type == expected) {
+        advance_parser(parser);
+        return;
+    }
+
+    char *message;
+    asprintf(&message, "Expected %d, Actual %d", expected, token.type);
+    error(parser, message);
+}
+
+static void expect_token_class(Parser *parser, TokenType start, TokenType end) {
+    Token token = peek_parser(parser);
+    if (token.type > start && token.type < end) {
+        advance_parser(parser);
+        return;
+    }
+
+    error(parser, "Expected token in class");
+}
+
+// cts := CREATE TABLE name OPEN_PAREN columnlist CLOSE_PAREN SEMICOLON
+static void parse_create_table_statement(Parser *parser) {
+    expect_token(parser, CREATE_TOKEN);
+    expect_token(parser, TABLE_TOKEN);
+
+    parse_name(parser);
+
+    expect_token(parser, OPEN_PAREN_TOKEN);
+    parse_column_list(parser);
+    expect_token(parser, CLOSE_PAREN_TOKEN);
+
+    expect_token(parser, SEMICOLON_TOKEN);
+}
+
+// name := IDENT
+static void parse_name(Parser *parser) {
+    expect_token(parser, IDENT_TOKEN);
+}
+
+// columnlist := column columnlist’
+static void parse_column_list(Parser *parser) {
+    parse_column(parser);
+    parse_column_list_prime(parser);
+}
+
+// columnlist’ := COMMA column columnlist’ | epsilon
+static void parse_column_list_prime(Parser *parser) {
+    Token token = peek_parser(parser);
+    if (token.type == COMMA_TOKEN) {
+        expect_token(parser, COMMA_TOKEN);
+        parse_column(parser);
+        parse_column_list_prime(parser);
+    }
+}
+
+// column := name type
+static void parse_column(Parser *parser) {
+    parse_name(parser);
+    parse_type(parser);
+}
+
+// type := INTEGER | TEXT
+static void parse_type(Parser *parser) {
+    expect_token_class(parser, _types_start, _types_end);
 }
